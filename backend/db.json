@@ -1,0 +1,50 @@
+{
+  "profile": {
+     "name": "Dr. Researcher",
+     "title": "Lead Scientist at Quantum Institute | Condensed Matter Physicist",
+     "institution": "Quantum Institute",
+     "about": "Passionate researcher with 10+ years of experience bridging the gap between artificial intelligence and quantum computing. Focus on accelerating material discovery using NISQ devices.",
+     "stats": {
+        "hIndex": 34,
+        "citations": 4192,
+        "interest": 124
+     },
+     "publications": [
+       { 
+         "title": "Quantum Neural Networks for Material Discovery", 
+         "journal": "Nature Physics", 
+         "date": "2025-10-15T12:00:00Z", 
+         "citations": 412, 
+         "abstract": "A novel architecture combining quantum circuits with classical deep learning to model solid-state systems." 
+       }
+     ],
+     "grants": [
+       { "name": "Quantum Simulation Initiative", "agency": "National Science Foundation", "amount": "$1.2M", "period": "2024 - 2027" }
+     ],
+     "skills": [ { "name": "Quantum Computing", "level": 5 }, { "name": "Machine Learning", "level": 4 } ]
+  },
+  "feed": [
+    {
+      "author": "James Wilson", "action": "requested a peer review for", "target": "Upcoming ArXiv Preprint",
+      "content": "I'm looking for experts in dynamical decoupling algorithms to provide rapid feedback on a manuscript before we submit to PRL. Please DM if interested.",
+      "likes": 32, "comments": 12, "citations": 0, "isAi": false
+    },
+    {
+      "author": "Elena Rodriguez", "action": "published a new dataset in", "target": "Quantum Materials Hub",
+      "content": "Excited to share our latest high-resolution tunneling spectra dataset for BaFe2As2. Hope this helps the community model the superconducting gap more accurately.",
+      "likes": 124, "comments": 18, "citations": 2, "isAi": false,
+      "attachment": {
+         "title": "Tunneling_Spectra_BaFe2As2_2026.zip",
+         "type": "Dataset",
+         "icon": "database",
+         "desc": "Contains .csv files of dI/dV measurements at varied temperatures (4K - 100K) and magnetic fields (0T - 14T)."
+      }
+    }
+  ],
+  "community": [
+    { "name": "Alice Walker", "title": "Postdoc Researcher | Quantum Chemistry", "mutual": 14 },
+    { "name": "Bob Stevenson", "title": "Professor of Physics @ MIT", "mutual": 8 },
+    { "name": "Charlie Ng", "title": "Senior AI Scientist @ DeepMind", "mutual": 32 },
+    { "name": "David Kim", "title": "Quantum Hardware Engineer @ IBM", "mutual": 5 }
+  ]
+}

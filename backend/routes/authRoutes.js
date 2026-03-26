@@ -1,0 +1,441 @@
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const User = require('../models/User');
+const Profile = require('../models/Profile');
+const { authMiddleware } = require('../middleware/authMiddleware');
+const { encrypt, decrypt, hmacHash } = require('../utils/encryption');
+
+const router = express.Router();
+
+// ─── Token Helpers ────────────────────────────────────────────────────────────
+
+function generateAccessToken(userId) {
+  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '15m' });
+}
+
+function generateRefreshToken(userId) {
+  return jwt.sign({ userId, jti: crypto.randomUUID() }, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+}
+
+// ─── Validation Helpers ───────────────────────────────────────────────────────
+
+function validateEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function validatePassword(password) {
+  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]).{8,}$/.test(password);
+}
+
+// ─── POST /api/auth/register ──────────────────────────────────────────────────
+
+router.post('/register', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email, and password are required.' });
+    }
+    if (!validateEmail(email)) {
+      return res.status(400).json({ error: 'Invalid email format.' });
+    }
+    if (!validatePassword(password)) {
+      return res.status(400).json({
+        error: 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.'
+      });
+    }
+
+    const existing = await User.findByEmail(email);
+    if (existing) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+
+    const user = await User.createUser({ email, name, password });
+    
+    // Create default profile for new user
+    await Profile.create({
+      userId: user._id,
+      name: name,
+      title: 'Researcher'
+    });
+
+    const accessToken = generateAccessToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+    await user.addRefreshToken(refreshToken, req.headers['user-agent']);
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/api/auth',
+    });
+
+    res.status(201).json({
+      message: 'Registration successful.',
+      accessToken,
+      user: user.toJSON(),
+    });
+  } catch (err) {
+    console.error('Register error:', err);
+    res.status(500).json({ error: 'Registration failed. Please try again.' });
+  }
+});
+
+// ─── POST /api/auth/login ─────────────────────────────────────────────────────
+
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
+
+    const user = await User.findByEmail(email);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    const userWithPassword = await User.findById(user._id).select('+password');
+    if (!userWithPassword.password) {
+      return res.status(401).json({
+        error: `This account uses ${user.provider} sign-in. Please use that method.`
+      });
+    }
+
+    const isMatch = await userWithPassword.comparePassword(password);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    user.lastLogin = new Date();
+    await user.save();
+
+    const accessToken = generateAccessToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+    await user.addRefreshToken(refreshToken, req.headers['user-agent']);
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/api/auth',
+    });
+
+    res.json({
+      message: 'Login successful.',
+      accessToken,
+      user: user.toJSON(),
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Login failed. Please try again.' });
+  }
+});
+
+// ─── POST /api/auth/guest ─────────────────────────────────────────────────────
+
+router.post('/guest', async (req, res) => {
+  try {
+    const timestamp = Date.now();
+    const guestEmail = `guest_${timestamp}@graphium.app`;
+    const guestName = `Guest User`;
+    
+    // Create random password that passes validation
+    const guestPassword = `Guest!${crypto.randomBytes(4).toString('hex')}1`;
+    
+    const user = await User.createUser({ email: guestEmail, name: guestName, password: guestPassword });
+    
+    // Create default profile for the guest user
+    await Profile.create({
+      userId: user._id,
+      name: guestName,
+      title: 'Visiting Researcher'
+    });
+
+    const accessToken = generateAccessToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+    await user.addRefreshToken(refreshToken, req.headers['user-agent']);
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/api/auth',
+    });
+
+    res.status(201).json({
+      message: 'Guest login successful.',
+      accessToken,
+      user: user.toJSON(),
+    });
+  } catch (err) {
+    console.error('Guest login error:', err);
+    res.status(500).json({ error: 'Guest login failed. Please try again.' });
+  }
+});
+
+// ─── POST /api/auth/refresh ───────────────────────────────────────────────────
+
+router.post('/refresh', async (req, res) => {
+  try {
+    const token = req.cookies?.refreshToken;
+    if (!token) {
+      return res.status(401).json({ error: 'No refresh token provided.' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired refresh token.' });
+    }
+
+    const user = await User.findById(decoded.userId);
+    if (!user || !user.isActive) {
+      return res.status(401).json({ error: 'User not found or deactivated.' });
+    }
+
+    const isValid = await user.verifyRefreshToken(token);
+    if (!isValid) {
+      // Refresh token reuse or invalid token - for safety, revoke all
+      user.refreshTokens = [];
+      await user.save();
+      res.clearCookie('refreshToken', { path: '/api/auth' });
+      return res.status(401).json({ error: 'Refresh token invalid or reuse detected. All sessions revoked.' });
+    }
+
+    const newAccessToken = generateAccessToken(user._id);
+    const newRefreshToken = generateRefreshToken(user._id);
+    
+    // addRefreshToken will save the document
+    await user.addRefreshToken(newRefreshToken, req.headers['user-agent']);
+
+    res.cookie('refreshToken', newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/api/auth',
+    });
+
+    res.json({ accessToken: newAccessToken });
+  } catch (err) {
+    console.error('Refresh error:', err);
+    res.status(500).json({ error: 'Token refresh failed.' });
+  }
+});
+
+// ─── POST /api/auth/logout ────────────────────────────────────────────────────
+
+router.post('/logout', authMiddleware, async (req, res) => {
+  try {
+    const token = req.cookies?.refreshToken;
+    if (token) {
+      await req.user.verifyRefreshToken(token);
+    }
+    res.clearCookie('refreshToken', { path: '/api/auth' });
+    res.json({ message: 'Logged out successfully.' });
+  } catch (err) {
+    res.clearCookie('refreshToken', { path: '/api/auth' });
+    res.json({ message: 'Logged out.' });
+  }
+});
+
+// ─── GET /api/auth/me ─────────────────────────────────────────────────────────
+
+router.get('/me', authMiddleware, async (req, res) => {
+  res.json({ user: req.user.toJSON() });
+});
+
+// ─── OAuth Helper ─────────────────────────────────────────────────────────────
+
+async function handleOAuthUser({ email, name, provider, providerId, avatar }, req, res) {
+  let user = email ? await User.findByEmail(email) : await User.findOne({ provider, providerId });
+
+  if (!user) {
+    user = await User.createUser({
+      email: email || `${providerId}@${provider}.oauth`,
+      name: name || `${provider} User`,
+      provider,
+      providerId,
+      avatar: avatar || '',
+    });
+
+    // Create default profile for new OAuth user
+    await Profile.create({
+      userId: user._id,
+      name: user.name,
+      title: 'Researcher',
+      avatar: user.avatar
+    });
+  }
+
+  user.lastLogin = new Date();
+  await user.save();
+
+  const accessToken = generateAccessToken(user._id);
+  const refreshToken = generateRefreshToken(user._id);
+  await user.addRefreshToken(refreshToken, req.headers['user-agent']);
+
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: '/api/auth',
+  });
+
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  res.redirect(`${frontendUrl}/oauth-callback?token=${accessToken}`);
+}
+
+// ─── OAuth: Google ────────────────────────────────────────────────────────────
+
+router.get('/google', (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    return res.status(503).json({ error: 'Google OAuth not configured. Add GOOGLE_CLIENT_ID to .env' });
+  }
+  const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/google/callback`;
+  const scope = encodeURIComponent('openid email profile');
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent`;
+  res.redirect(url);
+});
+
+router.get('/google/callback', async (req, res) => {
+  try {
+    const { code } = req.query;
+    if (!code) return res.status(400).json({ error: 'No authorization code.' });
+
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/google/callback`;
+
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }),
+    });
+    const tokens = await tokenRes.json();
+    if (tokens.error) throw new Error(tokens.error_description || tokens.error);
+
+    const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+    const profile = await userInfoRes.json();
+
+    await handleOAuthUser({
+      email: profile.email,
+      name: profile.name,
+      provider: 'google',
+      providerId: profile.id,
+      avatar: profile.picture || '',
+    }, req, res);
+  } catch (err) {
+    console.error('Google OAuth error:', err);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/login?error=oauth_failed`);
+  }
+});
+
+// ─── OAuth: Apple ─────────────────────────────────────────────────────────────
+
+router.get('/apple', (req, res) => {
+  const clientId = process.env.APPLE_CLIENT_ID;
+  if (!clientId) {
+    return res.status(503).json({ error: 'Apple Sign-In not configured. Add APPLE_CLIENT_ID to .env' });
+  }
+  const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/apple/callback`;
+  const url = `https://appleid.apple.com/auth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code%20id_token&scope=name%20email&response_mode=form_post`;
+  res.redirect(url);
+});
+
+router.post('/apple/callback', async (req, res) => {
+  try {
+    const { id_token, user: appleUser } = req.body;
+    if (!id_token) return res.status(400).json({ error: 'No ID token.' });
+
+    const decoded = jwt.decode(id_token);
+    if (!decoded || !decoded.sub) {
+      return res.status(400).json({ error: 'Invalid Apple ID token.' });
+    }
+
+    let email, name;
+    try {
+      const parsed = appleUser ? JSON.parse(appleUser) : null;
+      email = decoded.email || (parsed && parsed.email);
+      name = parsed ? `${parsed.name?.firstName || ''} ${parsed.name?.lastName || ''}`.trim() : 'Apple User';
+    } catch {
+      email = decoded.email;
+      name = 'Apple User';
+    }
+
+    await handleOAuthUser({
+      email: email || `${decoded.sub}@privaterelay.appleid.com`,
+      name: name || 'Apple User',
+      provider: 'apple',
+      providerId: decoded.sub,
+    }, req, res);
+  } catch (err) {
+    console.error('Apple OAuth error:', err);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/login?error=oauth_failed`);
+  }
+});
+
+// ─── OAuth: ORCID ─────────────────────────────────────────────────────────────
+
+router.get('/orcid', (req, res) => {
+  const clientId = process.env.ORCID_CLIENT_ID;
+  if (!clientId) {
+    return res.status(503).json({ error: 'ORCID OAuth not configured. Add ORCID_CLIENT_ID to .env' });
+  }
+  const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/orcid/callback`;
+  const url = `https://orcid.org/oauth/authorize?client_id=${clientId}&response_type=code&scope=/authenticate&redirect_uri=${encodeURIComponent(redirectUri)}`;
+  res.redirect(url);
+});
+
+router.get('/orcid/callback', async (req, res) => {
+  try {
+    const { code } = req.query;
+    if (!code) return res.status(400).json({ error: 'No authorization code.' });
+
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/orcid/callback`;
+
+    const tokenRes = await fetch('https://orcid.org/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+      body: new URLSearchParams({
+        client_id: process.env.ORCID_CLIENT_ID,
+        client_secret: process.env.ORCID_CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+      }),
+    });
+    const tokens = await tokenRes.json();
+    if (tokens.error) throw new Error(tokens.error_description || tokens.error);
+
+    await handleOAuthUser({
+      email: `${tokens.orcid}@orcid.org`,
+      name: tokens.name || 'ORCID User',
+      provider: 'orcid',
+      providerId: tokens.orcid,
+    }, req, res);
+  } catch (err) {
+    console.error('ORCID OAuth error:', err);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/login?error=oauth_failed`);
+  }
+});
+
+module.exports = router;
