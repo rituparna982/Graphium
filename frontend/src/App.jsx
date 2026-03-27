@@ -15,6 +15,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import OAuthCallback from './pages/OAuthCallback';
 import Scholar from './pages/Scholar';
+import UserProfile from './pages/UserProfile';
 
 import React, { useState, useEffect, useRef } from 'react';
 import api from './api/axios';
@@ -195,6 +196,7 @@ export default function App() {
           <Route path="/messaging" element={<ProtectedRoute><Messaging /></ProtectedRoute>} />
           <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
           <Route path="/scholar" element={<ProtectedRoute><Scholar /></ProtectedRoute>} />
+          <Route path="/user/:userId" element={<ProtectedRoute><UserProfile /></ProtectedRoute>} />
         </Routes>
       </main>
     </>

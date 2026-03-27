@@ -3,6 +3,44 @@ import api from '../api/axios';
 
 const AuthContext = createContext(null);
 
+// ─── LocalStorage Helpers ──────────────────────────────────────────────────────
+
+const STORAGE_KEYS = {
+  ACCESS_TOKEN: 'graphium_accessToken',
+  USER: 'graphium_user',
+};
+
+function saveToStorage(accessToken, user) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, accessToken);
+    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+  } catch {
+    // Storage may be unavailable (private browsing, etc.)
+  }
+}
+
+function loadFromStorage() {
+  try {
+    const accessToken = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+    const userStr = localStorage.getItem(STORAGE_KEYS.USER);
+    if (accessToken && userStr) {
+      return { accessToken, user: JSON.parse(userStr) };
+    }
+  } catch {
+    // Corrupted data, ignore
+  }
+  return null;
+}
+
+function clearStorage() {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+    localStorage.removeItem(STORAGE_KEYS.USER);
+  } catch {
+    // Ignore
+  }
+}
+
 // ─── State & Actions ──────────────────────────────────────────────────────────
 
 const initialState = {
@@ -50,6 +88,13 @@ export function AuthProvider({ children }) {
     return () => api.interceptors.request.eject(interceptor);
   }, [state.accessToken]);
 
+  // Persist to localStorage whenever auth state changes
+  useEffect(() => {
+    if (state.isAuthenticated && state.accessToken && state.user) {
+      saveToStorage(state.accessToken, state.user);
+    }
+  }, [state.isAuthenticated, state.accessToken, state.user]);
+
   // Auto-refresh access token before expiry
   const scheduleRefresh = useCallback(() => {
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
@@ -57,17 +102,31 @@ export function AuthProvider({ children }) {
     refreshTimerRef.current = setTimeout(async () => {
       try {
         const res = await api.post('/api/auth/refresh', {}, { withCredentials: true });
-        dispatch({ type: 'UPDATE_TOKEN', payload: res.data.accessToken });
+        const newToken = res.data.accessToken;
+        dispatch({ type: 'UPDATE_TOKEN', payload: newToken });
+        // Update token in localStorage too
+        try { localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, newToken); } catch {}
         scheduleRefresh();
       } catch {
+        clearStorage();
         dispatch({ type: 'AUTH_LOGOUT' });
       }
     }, 13 * 60 * 1000); // 13 minutes
   }, []);
 
-  // Try to restore session on mount via refresh token cookie
+  // Try to restore session on mount
   useEffect(() => {
     const restoreSession = async () => {
+      // Step 1: Immediately load cached data from localStorage for instant UI
+      const cached = loadFromStorage();
+      if (cached) {
+        dispatch({
+          type: 'AUTH_SUCCESS',
+          payload: { user: cached.user, accessToken: cached.accessToken },
+        });
+      }
+
+      // Step 2: Try to refresh the token from the server for a valid session
       try {
         const res = await api.post('/api/auth/refresh', {}, { withCredentials: true });
         const { accessToken } = res.data;
@@ -80,7 +139,14 @@ export function AuthProvider({ children }) {
         });
         scheduleRefresh();
       } catch {
-        dispatch({ type: 'AUTH_LOGOUT' });
+        // If refresh fails but we have cached data, keep showing it
+        // (the user will get logged out on the next API call that fails)
+        if (!cached) {
+          clearStorage();
+          dispatch({ type: 'AUTH_LOGOUT' });
+        } else {
+          dispatch({ type: 'SET_LOADING', payload: false });
+        }
       }
     };
     restoreSession();
@@ -93,9 +159,11 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     const res = await api.post('/api/auth/login', { email, password }, { withCredentials: true });
+    const { user, accessToken } = res.data;
+    saveToStorage(accessToken, user);
     dispatch({
       type: 'AUTH_SUCCESS',
-      payload: { user: res.data.user, accessToken: res.data.accessToken },
+      payload: { user, accessToken },
     });
     scheduleRefresh();
     return res.data;
@@ -103,9 +171,11 @@ export function AuthProvider({ children }) {
 
   const guestLogin = async () => {
     const res = await api.post('/api/auth/guest', {}, { withCredentials: true });
+    const { user, accessToken } = res.data;
+    saveToStorage(accessToken, user);
     dispatch({
       type: 'AUTH_SUCCESS',
-      payload: { user: res.data.user, accessToken: res.data.accessToken },
+      payload: { user, accessToken },
     });
     scheduleRefresh();
     return res.data;
@@ -113,9 +183,11 @@ export function AuthProvider({ children }) {
 
   const register = async (name, email, password) => {
     const res = await api.post('/api/auth/register', { name, email, password }, { withCredentials: true });
+    const { user, accessToken } = res.data;
+    saveToStorage(accessToken, user);
     dispatch({
       type: 'AUTH_SUCCESS',
-      payload: { user: res.data.user, accessToken: res.data.accessToken },
+      payload: { user, accessToken },
     });
     scheduleRefresh();
     return res.data;
@@ -128,10 +200,12 @@ export function AuthProvider({ children }) {
       // Continue even if backend fails
     }
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    clearStorage();
     dispatch({ type: 'AUTH_LOGOUT' });
   };
 
   const oauthLogin = (accessToken, user) => {
+    saveToStorage(accessToken, user);
     dispatch({
       type: 'AUTH_SUCCESS',
       payload: { user, accessToken },
