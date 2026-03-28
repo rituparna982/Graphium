@@ -252,6 +252,23 @@ router.get('/me', authMiddleware, async (req, res) => {
   res.json({ user: req.user.toJSON() });
 });
 
+// ─── GET /api/auth/users (admin: view all registered users) ──────────────────
+
+router.get('/users', authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required.' });
+    }
+    const users = await User.find().sort({ createdAt: -1 });
+    res.json({
+      total: users.length,
+      users: users.map(u => u.toJSON()),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch users.' });
+  }
+});
+
 // ─── OAuth Helper ─────────────────────────────────────────────────────────────
 
 async function handleOAuthUser({ email, name, provider, providerId, avatar }, req, res) {

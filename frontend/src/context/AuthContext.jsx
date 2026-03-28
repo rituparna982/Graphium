@@ -126,9 +126,15 @@ export function AuthProvider({ children }) {
         });
       }
 
-      // Step 2: Try to refresh the token from the server for a valid session
+      // Step 2: Try to refresh the token from the server (with 5s timeout)
       try {
-        const res = await api.post('/api/auth/refresh', {}, { withCredentials: true });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const res = await api.post('/api/auth/refresh', {}, {
+          withCredentials: true,
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
         const { accessToken } = res.data;
         const meRes = await api.get('/api/auth/me', {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -140,7 +146,6 @@ export function AuthProvider({ children }) {
         scheduleRefresh();
       } catch {
         // If refresh fails but we have cached data, keep showing it
-        // (the user will get logged out on the next API call that fails)
         if (!cached) {
           clearStorage();
           dispatch({ type: 'AUTH_LOGOUT' });

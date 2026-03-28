@@ -11,8 +11,17 @@ const router = express.Router();
  */
 router.get('/', async (req, res, next) => {
   try {
-    const communities = await Community.find().populate('members', 'name avatar');
-    res.json(communities);
+    const Profile = require('../models/Profile');
+    const profiles = await Profile.find().populate('userId', 'nameEncrypted avatar provider').lean();
+    const users = profiles.map(p => ({
+      _id: p.userId?._id,
+      id: p.userId?._id,
+      name: p.name,
+      title: p.title,
+      avatar: p.avatar,
+      mutual: 0,
+    })).filter(u => u._id);
+    res.json(users);
   } catch (err) {
     next(err);
   }

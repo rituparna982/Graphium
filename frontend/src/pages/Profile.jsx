@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/axios';
-import { CheckCircle, UserPlus, User, Microscope, BookOpen, Download } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { CheckCircle, UserPlus, User, Microscope, BookOpen, Download, PenSquare } from 'lucide-react';
+import PostModal from '../components/PostModal';
 
 export default function Profile() {
+  const { user } = useAuth();
   const [profile, setProfile] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
     api.get('/api/profile').then(res => setProfile(res.data));
@@ -42,6 +46,21 @@ export default function Profile() {
 
   return (
     <div className="profile-view">
+      <PostModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        user={user}
+        profile={profile}
+        onPostSuccess={() => setIsModalOpen(false)}
+      />
+      <button
+        onClick={() => setIsModalOpen(true)}
+        style={{ position: 'fixed', bottom: 32, right: 32, zIndex: 100, borderRadius: '50%', width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(0,0,0,0.18)' }}
+        className="btn-primary"
+        title="Create a post"
+      >
+        <PenSquare size={22} />
+      </button>
       <div className="profile-core">
         <div>
           <div className="card profile-top-card">

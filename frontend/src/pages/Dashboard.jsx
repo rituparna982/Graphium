@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
-import { Microscope, Database, Calendar, TrendingUp, ThumbsUp, MessageSquare, Bookmark, Quote, Globe, FileText, CheckCircle, Edit, Library, Clock, PenSquare, Share2, BookOpen, HelpCircle, Award, Newspaper, ExternalLink, Tag, Repeat2 } from 'lucide-react';
+import { Microscope, Database, Calendar, TrendingUp, ThumbsUp, MessageSquare, Bookmark, Quote, Globe, FileText, CheckCircle, Edit, Library, Clock, PenSquare, Share2, BookOpen, HelpCircle, Award, Newspaper, ExternalLink, Tag, Repeat2, Send, X } from 'lucide-react';
 import PostModal from '../components/PostModal';
 
 // Helper: format timestamps as relative time ("2 mins ago", "3 hours ago", etc.)
@@ -175,6 +175,10 @@ export default function Dashboard() {
   const [activeCommentPost, setActiveCommentPost] = useState(null);
   const [commentsCache, setCommentsCache] = useState({});
   const [newComment, setNewComment] = useState('');
+  
+  const [sendPostId, setSendPostId] = useState(null);
+  const [sendUserSearch, setSendUserSearch] = useState('');
+  const [usersList, setUsersList] = useState([]);
 
   const fetchData = async () => {
     try {
@@ -262,6 +266,27 @@ export default function Dashboard() {
       setNewComment('');
     } catch(err) {
       console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    // Optionally fetch friends/users if we wanted
+    api.get('/api/communities').then(res => {
+      if(Array.isArray(res.data)) setUsersList(res.data);
+    }).catch(() => {});
+  }, []);
+
+  const sendPostMessage = async (targetUserId) => {
+    if (!sendPostId || !targetUserId) return;
+    try {
+      await api.post(`/api/messages/${targetUserId}`, { 
+        content: `I shared a post with you! Check out my updates on the home page.` 
+      });
+      setSendPostId(null);
+      alert('Post shared via message successfully!');
+    } catch(err) {
+      console.error(err);
+      alert('Error sending message');
     }
   };
 
@@ -486,6 +511,12 @@ export default function Dashboard() {
                 </button>
                 <button 
                   className="post-action-btn"
+                  onClick={() => setSendPostId(item._id || item.id)}
+                >
+                  <Send size={18}/> Send
+                </button>
+                <button 
+                  className="post-action-btn"
                   onClick={() => toggleSave(item._id || item.id)}
                   style={{ color: savedSet.has(item._id || item.id) ? 'var(--accent-color)' : 'inherit' }}
                 >
@@ -545,6 +576,38 @@ export default function Dashboard() {
           ))}
         </div>
       </div>
+
+      {sendPostId && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+          background: 'rgba(0,0,0,0.5)', zIndex: 1000, 
+          display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}>
+          <div style={{ background: 'white', padding: 24, borderRadius: 12, width: '100%', maxWidth: 400 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 600 }}>Send in Message</h3>
+              <X size={20} style={{ cursor: 'pointer' }} onClick={() => setSendPostId(null)} />
+            </div>
+            <input 
+              type="text" 
+              placeholder="Search user..." 
+              value={sendUserSearch}
+              onChange={(e) => setSendUserSearch(e.target.value)}
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border-color)', marginBottom: 16 }}
+            />
+            <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+              {usersList.filter(u => u.name?.toLowerCase().includes(sendUserSearch.toLowerCase())).map(u => (
+                <div key={u._id || u.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--border-color)' }}>
+                  <div className="share-avatar" style={{width: 32, height: 32}}>{u.name?.charAt(0) || 'U'}</div>
+                  <div style={{ flex: 1, fontWeight: 500 }}>{u.name}</div>
+                  <button className="btn-primary" onClick={() => sendPostMessage(u._id || u.id)} style={{ padding: '6px 12px', borderRadius: 16, fontSize: 13 }}>Send</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

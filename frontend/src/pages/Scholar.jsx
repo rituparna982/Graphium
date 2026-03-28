@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../api/axios';
-import { Search, BookOpen, ExternalLink, Share2, Plus, Loader2, AlertCircle } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { Search, BookOpen, ExternalLink, Share2, Plus, Loader2, AlertCircle, PenSquare } from 'lucide-react';
+import PostModal from '../components/PostModal';
 
 export default function Scholar() {
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const [query, setQuery] = useState(searchParams.get('q') || '');
   const [results, setResults] = useState([]);
   const [isMock, setIsMock] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
     const q = searchParams.get('q');
@@ -70,6 +74,20 @@ export default function Scholar() {
 
   return (
     <div className="scholar-layout">
+      <PostModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        user={user}
+        onPostSuccess={() => setIsModalOpen(false)}
+      />
+      <button
+        onClick={() => setIsModalOpen(true)}
+        style={{ position: 'fixed', bottom: 32, right: 32, zIndex: 100, borderRadius: '50%', width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(0,0,0,0.18)' }}
+        className="btn-primary"
+        title="Create a post"
+      >
+        <PenSquare size={22} />
+      </button>
       {isMock && (
         <div className="card" style={{ 
           background: '#fff9db', 

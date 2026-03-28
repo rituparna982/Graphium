@@ -19,6 +19,9 @@ const profileRoutes = require('./routes/profileRoutes');
 const communityRoutes = require('./routes/communityRoutes');
 const scholarRoutes = require('./routes/scholarRoutes');
 const messageRoutes = require('./routes/messageRoutes');
+const labRoutes = require('./routes/labRoutes');
+const collaborationRoutes = require('./routes/collaborationRoutes');
+const conferenceRoutes = require('./routes/conferenceRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -180,6 +183,9 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/communities', communityRoutes);
 app.use('/api/scholar', scholarRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/labs', labRoutes);
+app.use('/api/collaborations', collaborationRoutes);
+app.use('/api/conference-papers', conferenceRoutes);
 
 // Error Handling Middleware (must be after routes)
 app.use(errorMiddleware);
