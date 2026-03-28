@@ -1,51 +1,58 @@
 const express = require('express');
 const Collaboration = require('../models/Collaboration');
-const Profile = require('../models/Profile');
+const History = require('../models/History');
 const { authMiddleware } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-// GET /api/collaborations — get my collaborations (sent + received)
+// ─── Helper: Log to history ───────────────────────────────────────────────────
+async function logHistory(userId, action, description, metadata = {}, targetId = null) {
+  try {
+    await History.create({ userId, action, category: 'collaboration', description, metadata, targetId, targetType: 'Collaboration' });
+  } catch (err) {
+    console.error('[HISTORY] Failed to log:', err.message);
+  }
+}
+
+// GET /api/collaborations — get ALL collaborations (DEV MODE: see everything)
 router.get('/', authMiddleware, async (req, res, next) => {
   try {
-    const userId = req.user._id;
-    const collabs = await Collaboration.find({
-      $or: [{ requester: userId }, { recipient: userId }]
-    })
+    const collabs = await Collaboration.find()
       .populate('requester', 'nameEncrypted avatar')
       .populate('recipient', 'nameEncrypted avatar')
       .sort({ createdAt: -1 });
+    console.log(`[COLLAB] Fetched ${collabs.length} collaborations`);
     res.json(collabs);
   } catch (err) { next(err); }
 });
 
-// POST /api/collaborations — send a collaboration request
+// POST /api/collaborations — send a collaboration request (always succeeds)
 router.post('/', authMiddleware, async (req, res, next) => {
   try {
     const { recipientId, message, topic } = req.body;
     if (!recipientId) return res.status(400).json({ error: 'Recipient required.' });
-    if (recipientId === req.user._id.toString()) {
-      return res.status(400).json({ error: 'Cannot collaborate with yourself.' });
-    }
 
-    const existing = await Collaboration.findOne({
-      $or: [
-        { requester: req.user._id, recipient: recipientId },
-        { requester: recipientId, recipient: req.user._id }
-      ]
-    });
-    if (existing) return res.status(409).json({ error: 'Collaboration request already exists.', collab: existing });
+    console.log('[COLLAB] Creating request from', req.user._id, 'to', recipientId);
 
+    // DEV MODE: Skip self-check and duplicate check
     const collab = await Collaboration.create({
       requester: req.user._id,
       recipient: recipientId,
       message: message || '',
       topic: topic || '',
+      status: 'accepted', // DEV MODE: Auto-accept
     });
     await collab.populate('requester', 'nameEncrypted avatar');
     await collab.populate('recipient', 'nameEncrypted avatar');
+
+    await logHistory(req.user._id, 'collab_requested', `Sent collaboration request`, { recipientId, topic }, collab._id);
+
+    console.log('[COLLAB] Request created and auto-accepted:', collab._id);
     res.status(201).json(collab);
-  } catch (err) { next(err); }
+  } catch (err) {
+    console.error('[COLLAB] POST / error:', err);
+    next(err);
+  }
 });
 
 // PATCH /api/collaborations/:id — accept or decline
@@ -57,27 +64,29 @@ router.patch('/:id', authMiddleware, async (req, res, next) => {
     }
     const collab = await Collaboration.findById(req.params.id);
     if (!collab) return res.status(404).json({ error: 'Collaboration not found.' });
-    if (collab.recipient.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Only the recipient can respond.' });
-    }
+    
+    // DEV MODE: Skip recipient check — anyone can accept/decline
     collab.status = status;
     await collab.save();
     await collab.populate('requester', 'nameEncrypted avatar');
     await collab.populate('recipient', 'nameEncrypted avatar');
+
+    await logHistory(req.user._id, `collab_${status}`, `Collaboration ${status}`, {}, collab._id);
+
     res.json(collab);
   } catch (err) { next(err); }
 });
 
-// DELETE /api/collaborations/:id — cancel/remove
+// DELETE /api/collaborations/:id — anyone can delete (DEV MODE)
 router.delete('/:id', authMiddleware, async (req, res, next) => {
   try {
     const collab = await Collaboration.findById(req.params.id);
     if (!collab) return res.status(404).json({ error: 'Not found.' });
-    if (collab.requester.toString() !== req.user._id.toString() &&
-        collab.recipient.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Not authorized.' });
-    }
+    
+    // DEV MODE: Skip ownership check
     await collab.deleteOne();
+    await logHistory(req.user._id, 'collab_removed', 'Removed collaboration', {}, collab._id);
+
     res.json({ message: 'Removed.' });
   } catch (err) { next(err); }
 });

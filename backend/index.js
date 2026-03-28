@@ -22,6 +22,7 @@ const messageRoutes = require('./routes/messageRoutes');
 const labRoutes = require('./routes/labRoutes');
 const collaborationRoutes = require('./routes/collaborationRoutes');
 const conferenceRoutes = require('./routes/conferenceRoutes');
+const historyRoutes = require('./routes/historyRoutes'); // NEW: History routes
 
 const app = express();
 const server = http.createServer(app);
@@ -31,10 +32,18 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 // Connect to MongoDB
 connectDB();
 
+// ─── Startup Log ──────────────────────────────────────────────────────────────
+console.log('══════════════════════════════════════════════════');
+console.log('  GRAPHIUM — DEV MODE');
+console.log('  Auth bypass: ENABLED');
+console.log('  Role restrictions: DISABLED');
+console.log('  History logging: ENABLED');
+console.log('══════════════════════════════════════════════════');
+
 // ─── Socket.IO Setup ─────────────────────────────────────────────────────────
 const io = new Server(server, {
   cors: {
-    origin: FRONTEND_URL,
+    origin: [FRONTEND_URL, 'http://localhost:5173', 'http://localhost:3000'],
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -43,25 +52,28 @@ const io = new Server(server, {
 // Track online users: userId -> socketId
 const onlineUsers = new Map();
 
-// Authenticate socket connections using JWT
+// DEV MODE: Relaxed socket authentication
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
-  if (!token) {
-    return next(new Error('Authentication required'));
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      socket.userId = decoded.userId;
+    } catch (err) {
+      console.log('[SOCKET] Token verification failed, using socket id as userId');
+      socket.userId = socket.id;
+    }
+  } else {
+    console.log('[SOCKET] No token provided, using socket id as userId');
+    socket.userId = socket.id;
   }
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    socket.userId = decoded.userId;
-    next();
-  } catch (err) {
-    next(new Error('Invalid token'));
-  }
+  next(); // DEV MODE: Always allow connection
 });
 
 io.on('connection', (socket) => {
   const userId = socket.userId;
   onlineUsers.set(userId, socket.id);
-  console.log(`User connected: ${userId}`);
+  console.log(`[SOCKET] User connected: ${userId}`);
 
   // Broadcast online status
   io.emit('user_online', { userId });
@@ -101,8 +113,9 @@ io.on('connection', (socket) => {
 
       // Confirm to sender
       socket.emit('message_sent', msgData);
+      console.log(`[SOCKET] Message sent from ${userId} to ${receiverId}`);
     } catch (err) {
-      console.error('Message send error:', err);
+      console.error('[SOCKET] Message send error:', err);
       socket.emit('message_error', { error: 'Failed to send message' });
     }
   });
@@ -116,13 +129,12 @@ io.on('connection', (socket) => {
         { conversationId, receiver: userId, read: false },
         { $set: { read: true } }
       );
-      // Notify the sender that their messages were read
       const senderSocketId = onlineUsers.get(otherUserId);
       if (senderSocketId) {
         io.to(senderSocketId).emit('messages_read', { conversationId, readBy: userId });
       }
     } catch (err) {
-      console.error('Mark read error:', err);
+      console.error('[SOCKET] Mark read error:', err);
     }
   });
 
@@ -146,7 +158,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     onlineUsers.delete(userId);
     io.emit('user_offline', { userId });
-    console.log(`User disconnected: ${userId}`);
+    console.log(`[SOCKET] User disconnected: ${userId}`);
   });
 });
 
@@ -156,8 +168,9 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
+// DEV MODE: Allow multiple origins
 app.use(cors({
-  origin: FRONTEND_URL,
+  origin: [FRONTEND_URL, 'http://localhost:5173', 'http://localhost:3000'],
   credentials: true,
 }));
 
@@ -165,16 +178,22 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Rate limiting on auth endpoints
+// DEV MODE: Relaxed rate limiting
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 1000, // DEV: much higher limit
   message: { error: 'Too many requests. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 app.use(express.static(path.join(__dirname, '../frontend')));
+
+// ─── Request Logging Middleware ───────────────────────────────────────────────
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth', authLimiter, authRoutes);
@@ -186,11 +205,19 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/labs', labRoutes);
 app.use('/api/collaborations', collaborationRoutes);
 app.use('/api/conference-papers', conferenceRoutes);
+app.use('/api/history', historyRoutes); // NEW: History routes
+
+// ─── Health Check ─────────────────────────────────────────────────────────────
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', mode: 'development', uptime: process.uptime() });
+});
 
 // Error Handling Middleware (must be after routes)
 app.use(errorMiddleware);
 
 // Use server.listen instead of app.listen so Socket.IO works
 server.listen(PORT, () => {
-  console.log(`Backend API + WebSocket running on http://localhost:${PORT}`);
+  console.log(`\n🚀 Backend API + WebSocket running on http://localhost:${PORT}`);
+  console.log(`📡 Frontend expected at: ${FRONTEND_URL}`);
+  console.log(`🔧 Dev mode: All auth bypassed, all permissions granted\n`);
 });

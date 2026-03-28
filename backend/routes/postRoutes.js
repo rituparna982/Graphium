@@ -2,16 +2,25 @@ const express = require('express');
 const Post = require('../models/Post');
 const Comment = require('../models/Comment');
 const User = require('../models/User');
+const History = require('../models/History');
 const { authMiddleware } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validate');
 
 const router = express.Router();
 
+// ─── Helper: Log to history ───────────────────────────────────────────────────
+async function logHistory(userId, action, category, description, metadata = {}, targetId = null, targetType = '') {
+  try {
+    await History.create({ userId, action, category, description, metadata, targetId, targetType });
+  } catch (err) {
+    console.error('[HISTORY] Failed to log:', err.message);
+  }
+}
+
 /**
  * @route   GET /api/posts
  * @desc    Get all posts (most recent first), with optional pagination
- * @access  Public
- * @query   page (default 1), limit (default 20)
+ * @access  Public (DEV MODE — no auth required for reading)
  */
 router.get('/', async (req, res, next) => {
   try {
@@ -32,6 +41,8 @@ router.get('/', async (req, res, next) => {
       Post.countDocuments()
     ]);
 
+    console.log(`[POSTS] Fetched ${posts.length} posts (page ${page}, total ${total})`);
+
     res.json({
       posts,
       pagination: {
@@ -43,13 +54,14 @@ router.get('/', async (req, res, next) => {
       }
     });
   } catch (err) {
+    console.error('[POSTS] GET / error:', err);
     next(err);
   }
 });
 
 /**
  * @route   GET /api/posts/user/:userId
- * @desc    Get all posts by a specific user (most recent first)
+ * @desc    Get all posts by a specific user
  * @access  Public
  */
 router.get('/user/:userId', async (req, res, next) => {
@@ -82,14 +94,19 @@ router.get('/user/:userId', async (req, res, next) => {
 
 /**
  * @route   POST /api/posts
- * @desc    Create a post (stored in MongoDB). Supports different categories.
+ * @desc    Create a post — DEV MODE: always succeeds, logs to history
  * @access  Private
  */
-router.post('/', authMiddleware, validate(['content']), async (req, res, next) => {
+router.post('/', authMiddleware, async (req, res, next) => {
   try {
     const { content, category, target, attachment, tags, paper, dataset, event, article } = req.body;
 
-    // Auto-generate action text based on category
+    console.log('[POSTS] Creating post:', { userId: req.user._id, category: category || 'general', contentLength: content?.length });
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'Post content is required.' });
+    }
+
     const actionMap = {
       general: 'shared an update',
       paper: 'published a paper',
@@ -122,38 +139,44 @@ router.post('/', authMiddleware, validate(['content']), async (req, res, next) =
     const savedPost = await newPost.save();
     await savedPost.populate('author', 'nameEncrypted avatar');
     
+    // Log to history
+    await logHistory(
+      req.user._id, 'post_created', 'post',
+      `Created ${postCategory} post: ${content.substring(0, 80)}`,
+      { category: postCategory, tags: tags || [] },
+      savedPost._id, 'Post'
+    );
+
+    console.log('[POSTS] Post created successfully:', savedPost._id);
     res.status(201).json(savedPost);
   } catch (err) {
+    console.error('[POSTS] Create error:', err);
     next(err);
   }
 });
 
 /**
  * @route   PUT /api/posts/:id
- * @desc    Update a post
- * @access  Private (Owner only)
+ * @desc    Update a post — DEV MODE: any logged-in user can edit
+ * @access  Private
  */
 router.put('/:id', authMiddleware, async (req, res, next) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) {
-      const err = new Error('Post not found');
-      err.statusCode = 404;
-      throw err;
+      return res.status(404).json({ error: 'Post not found' });
     }
 
-    if (post.author.toString() !== req.user._id.toString()) {
-      const err = new Error('Not authorized to edit this post');
-      err.statusCode = 403;
-      throw err;
-    }
-
+    // DEV MODE: Skip ownership check
     const { content, attachment } = req.body;
     if (content) post.content = content;
     if (attachment) post.attachment = attachment;
 
     const updatedPost = await post.save();
     await updatedPost.populate('author', 'nameEncrypted avatar');
+
+    await logHistory(req.user._id, 'post_updated', 'post', `Updated post: ${post._id}`, {}, post._id, 'Post');
+
     res.json(updatedPost);
   } catch (err) {
     next(err);
@@ -162,25 +185,20 @@ router.put('/:id', authMiddleware, async (req, res, next) => {
 
 /**
  * @route   DELETE /api/posts/:id
- * @desc    Delete a post
- * @access  Private (Owner only)
+ * @desc    Delete a post — DEV MODE: any logged-in user can delete
+ * @access  Private
  */
 router.delete('/:id', authMiddleware, async (req, res, next) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) {
-      const err = new Error('Post not found');
-      err.statusCode = 404;
-      throw err;
+      return res.status(404).json({ error: 'Post not found' });
     }
 
-    if (post.author.toString() !== req.user._id.toString()) {
-      const err = new Error('Not authorized to delete this post');
-      err.statusCode = 403;
-      throw err;
-    }
-
+    // DEV MODE: Skip ownership check
     await post.deleteOne();
+    await logHistory(req.user._id, 'post_deleted', 'post', `Deleted post: ${req.params.id}`, {}, post._id, 'Post');
+
     res.json({ message: 'Post removed' });
   } catch (err) {
     next(err);
@@ -189,21 +207,18 @@ router.delete('/:id', authMiddleware, async (req, res, next) => {
 
 /**
  * @route   POST /api/posts/:id/share
- * @desc    Share/Repost a post. Creates a new repost referencing the original.
+ * @desc    Share/Repost a post
  * @access  Private
  */
 router.post('/:id/share', authMiddleware, async (req, res, next) => {
   try {
     const originalPost = await Post.findById(req.params.id);
     if (!originalPost) {
-      const err = new Error('Post not found');
-      err.statusCode = 404;
-      throw err;
+      return res.status(404).json({ error: 'Post not found' });
     }
 
     const { content } = req.body;
 
-    // Create a repost
     const repost = new Post({
       author: req.user._id,
       content: content || '',
@@ -215,7 +230,6 @@ router.post('/:id/share', authMiddleware, async (req, res, next) => {
 
     const savedRepost = await repost.save();
     
-    // Increment share counter on original
     originalPost.shares += 1;
     await originalPost.save();
 
@@ -224,6 +238,8 @@ router.post('/:id/share', authMiddleware, async (req, res, next) => {
       path: 'originalPost',
       populate: { path: 'author', select: 'nameEncrypted avatar' }
     });
+
+    await logHistory(req.user._id, 'post_shared', 'post', `Shared post: ${originalPost._id}`, {}, savedRepost._id, 'Post');
     
     res.status(201).json(savedRepost);
   } catch (err) {
@@ -240,20 +256,17 @@ router.post('/:id/like', authMiddleware, async (req, res, next) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) {
-      const err = new Error('Post not found');
-      err.statusCode = 404;
-      throw err;
+      return res.status(404).json({ error: 'Post not found' });
     }
 
     const userId = req.user._id;
     const index = post.likedBy.indexOf(userId);
 
     if (index === -1) {
-      // Like
       post.likedBy.push(userId);
       post.likes += 1;
+      await logHistory(userId, 'post_liked', 'post', `Liked post: ${post._id}`, {}, post._id, 'Post');
     } else {
-      // Unlike
       post.likedBy.splice(index, 1);
       post.likes -= 1;
     }
@@ -286,16 +299,18 @@ router.get('/:id/comments', async (req, res, next) => {
  * @desc    Add a comment to a post
  * @access  Private
  */
-router.post('/:id/comment', authMiddleware, validate(['content']), async (req, res, next) => {
+router.post('/:id/comment', authMiddleware, async (req, res, next) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) {
-      const err = new Error('Post not found');
-      err.statusCode = 404;
-      throw err;
+      return res.status(404).json({ error: 'Post not found' });
     }
 
     const { content } = req.body;
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'Comment content is required.' });
+    }
+
     const newComment = new Comment({
       post: req.params.id,
       author: req.user._id,
@@ -304,11 +319,13 @@ router.post('/:id/comment', authMiddleware, validate(['content']), async (req, r
 
     const savedComment = await newComment.save();
     
-    // Increment comments counter
     post.comments += 1;
     await post.save();
 
     await savedComment.populate('author', 'nameEncrypted avatar');
+
+    await logHistory(req.user._id, 'comment_added', 'post', `Commented on post: ${post._id}`, { content: content.substring(0, 50) }, post._id, 'Post');
+
     res.status(201).json(savedComment);
   } catch (err) {
     next(err);
@@ -324,20 +341,16 @@ router.post('/comment/:commentId/like', authMiddleware, async (req, res, next) =
   try {
     const comment = await Comment.findById(req.params.commentId);
     if (!comment) {
-      const err = new Error('Comment not found');
-      err.statusCode = 404;
-      throw err;
+      return res.status(404).json({ error: 'Comment not found' });
     }
 
     const userId = req.user._id;
     const index = comment.likedBy.indexOf(userId);
 
     if (index === -1) {
-      // Like
       comment.likedBy.push(userId);
       comment.likes += 1;
     } else {
-      // Unlike
       comment.likedBy.splice(index, 1);
       comment.likes -= 1;
     }
@@ -349,7 +362,6 @@ router.post('/comment/:commentId/like', authMiddleware, async (req, res, next) =
   }
 });
 
-
 /**
  * @route   POST /api/posts/:id/save
  * @desc    Toggle save on a post
@@ -359,25 +371,20 @@ router.post('/:id/save', authMiddleware, async (req, res, next) => {
   try {
     const user = await User.findById(req.user._id);
     if (!user) {
-      const err = new Error('User not found');
-      err.statusCode = 404;
-      throw err;
+      return res.status(404).json({ error: 'User not found' });
     }
 
     const postId = req.params.id;
     const post = await Post.findById(postId);
     if (!post) {
-      const err = new Error('Post not found');
-      err.statusCode = 404;
-      throw err;
+      return res.status(404).json({ error: 'Post not found' });
     }
 
     const index = user.savedPosts.indexOf(postId);
     if (index === -1) {
-      // Save
       user.savedPosts.push(postId);
+      await logHistory(user._id, 'post_saved', 'post', `Saved post: ${postId}`, {}, post._id, 'Post');
     } else {
-      // Unsave
       user.savedPosts.splice(index, 1);
     }
 

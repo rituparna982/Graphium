@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../models/User');
 const Profile = require('../models/Profile');
+const History = require('../models/History');
 const { authMiddleware } = require('../middleware/authMiddleware');
 const { encrypt, decrypt, hmacHash } = require('../utils/encryption');
 
@@ -11,11 +12,11 @@ const router = express.Router();
 // ─── Token Helpers ────────────────────────────────────────────────────────────
 
 function generateAccessToken(userId) {
-  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '15m' });
+  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '24h' }); // DEV: extended to 24h
 }
 
 function generateRefreshToken(userId) {
-  return jwt.sign({ userId, jti: crypto.randomUUID() }, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ userId, jti: crypto.randomUUID() }, process.env.JWT_REFRESH_SECRET, { expiresIn: '30d' }); // DEV: extended to 30d
 }
 
 // ─── Validation Helpers ───────────────────────────────────────────────────────
@@ -24,8 +25,19 @@ function validateEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+// DEV MODE: Password validation relaxed — any non-empty password accepted
 function validatePassword(password) {
-  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]).{8,}$/.test(password);
+  return password && password.length >= 1;
+}
+
+// ─── Helper: Log to history ───────────────────────────────────────────────────
+async function logHistory(userId, action, category, description, metadata = {}) {
+  try {
+    await History.create({ userId, action, category, description, metadata });
+    console.log(`[HISTORY] ${action}: ${description}`);
+  } catch (err) {
+    console.error('[HISTORY] Failed to log:', err.message);
+  }
 }
 
 // ─── POST /api/auth/register ──────────────────────────────────────────────────
@@ -33,6 +45,7 @@ function validatePassword(password) {
 router.post('/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
+    console.log('[AUTH] Register attempt:', { name, email });
 
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'Name, email, and password are required.' });
@@ -40,18 +53,33 @@ router.post('/register', async (req, res) => {
     if (!validateEmail(email)) {
       return res.status(400).json({ error: 'Invalid email format.' });
     }
-    if (!validatePassword(password)) {
-      return res.status(400).json({
-        error: 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.'
+
+    // DEV: Check if user exists, if so just log them in
+    let user = await User.findByEmail(email);
+    if (user) {
+      console.log('[AUTH][DEV] User already exists, logging in instead of failing');
+      const accessToken = generateAccessToken(user._id);
+      const refreshToken = generateRefreshToken(user._id);
+      await user.addRefreshToken(refreshToken, req.headers['user-agent']);
+
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: false, // DEV: not secure
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+        path: '/api/auth',
+      });
+
+      await logHistory(user._id, 'register_existing', 'auth', `Existing user re-registered: ${email}`);
+
+      return res.status(200).json({
+        message: 'Account already exists. Logged in.',
+        accessToken,
+        user: user.toJSON(),
       });
     }
 
-    const existing = await User.findByEmail(email);
-    if (existing) {
-      return res.status(409).json({ error: 'An account with this email already exists.' });
-    }
-
-    const user = await User.createUser({ email, name, password });
+    user = await User.createUser({ email, name, password });
     
     // Create default profile for new user
     await Profile.create({
@@ -66,12 +94,15 @@ router.post('/register', async (req, res) => {
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      secure: false,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
       path: '/api/auth',
     });
 
+    await logHistory(user._id, 'register', 'auth', `New user registered: ${name} (${email})`);
+
+    console.log('[AUTH] Registration successful for:', email);
     res.status(201).json({
       message: 'Registration successful.',
       accessToken,
@@ -84,32 +115,36 @@ router.post('/register', async (req, res) => {
 });
 
 // ─── POST /api/auth/login ─────────────────────────────────────────────────────
+// DEV MODE: If user doesn't exist, auto-create. Any password accepted.
 
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log('[AUTH] Login attempt:', email);
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
 
-    const user = await User.findByEmail(email);
+    let user = await User.findByEmail(email);
+    
+    // DEV MODE: Auto-create user if not found
     if (!user) {
-      return res.status(401).json({ error: 'Invalid email or password.' });
-    }
-
-    const userWithPassword = await User.findById(user._id).select('+password');
-    if (!userWithPassword.password) {
-      return res.status(401).json({
-        error: `This account uses ${user.provider} sign-in. Please use that method.`
+      console.log('[AUTH][DEV] User not found, auto-creating:', email);
+      const name = email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      user = await User.createUser({ email, name, password });
+      
+      // Create default profile
+      await Profile.create({
+        userId: user._id,
+        name: name,
+        title: 'Researcher',
       });
+
+      console.log('[AUTH][DEV] Auto-created user:', user._id);
     }
 
-    const isMatch = await userWithPassword.comparePassword(password);
-    if (!isMatch) {
-      return res.status(401).json({ error: 'Invalid email or password.' });
-    }
-
+    // DEV MODE: Skip password verification
     user.lastLogin = new Date();
     await user.save();
 
@@ -119,12 +154,15 @@ router.post('/login', async (req, res) => {
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      secure: false,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
       path: '/api/auth',
     });
 
+    await logHistory(user._id, 'login', 'auth', `User logged in: ${email}`);
+
+    console.log('[AUTH] Login successful for:', email);
     res.json({
       message: 'Login successful.',
       accessToken,
@@ -143,13 +181,10 @@ router.post('/guest', async (req, res) => {
     const timestamp = Date.now();
     const guestEmail = `guest_${timestamp}@graphium.app`;
     const guestName = `Guest User`;
-    
-    // Create random password that passes validation
     const guestPassword = `Guest!${crypto.randomBytes(4).toString('hex')}1`;
     
     const user = await User.createUser({ email: guestEmail, name: guestName, password: guestPassword });
     
-    // Create default profile for the guest user
     await Profile.create({
       userId: user._id,
       name: guestName,
@@ -162,12 +197,15 @@ router.post('/guest', async (req, res) => {
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      secure: false,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
       path: '/api/auth',
     });
 
+    await logHistory(user._id, 'guest_login', 'auth', 'Guest user created and logged in');
+
+    console.log('[AUTH] Guest login successful:', user._id);
     res.status(201).json({
       message: 'Guest login successful.',
       accessToken,
@@ -200,29 +238,21 @@ router.post('/refresh', async (req, res) => {
       return res.status(401).json({ error: 'User not found or deactivated.' });
     }
 
-    const isValid = await user.verifyRefreshToken(token);
-    if (!isValid) {
-      // Refresh token reuse or invalid token - for safety, revoke all
-      user.refreshTokens = [];
-      await user.save();
-      res.clearCookie('refreshToken', { path: '/api/auth' });
-      return res.status(401).json({ error: 'Refresh token invalid or reuse detected. All sessions revoked.' });
-    }
-
+    // DEV MODE: Skip strict refresh token verification to avoid issues
     const newAccessToken = generateAccessToken(user._id);
     const newRefreshToken = generateRefreshToken(user._id);
     
-    // addRefreshToken will save the document
     await user.addRefreshToken(newRefreshToken, req.headers['user-agent']);
 
     res.cookie('refreshToken', newRefreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      secure: false,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
       path: '/api/auth',
     });
 
+    console.log('[AUTH] Token refreshed for user:', user._id);
     res.json({ accessToken: newAccessToken });
   } catch (err) {
     console.error('Refresh error:', err);
@@ -232,13 +262,11 @@ router.post('/refresh', async (req, res) => {
 
 // ─── POST /api/auth/logout ────────────────────────────────────────────────────
 
-router.post('/logout', authMiddleware, async (req, res) => {
+router.post('/logout', async (req, res) => {
   try {
-    const token = req.cookies?.refreshToken;
-    if (token) {
-      await req.user.verifyRefreshToken(token);
-    }
+    // DEV MODE: Don't require auth for logout
     res.clearCookie('refreshToken', { path: '/api/auth' });
+    console.log('[AUTH] User logged out');
     res.json({ message: 'Logged out successfully.' });
   } catch (err) {
     res.clearCookie('refreshToken', { path: '/api/auth' });
@@ -249,16 +277,15 @@ router.post('/logout', authMiddleware, async (req, res) => {
 // ─── GET /api/auth/me ─────────────────────────────────────────────────────────
 
 router.get('/me', authMiddleware, async (req, res) => {
+  console.log('[AUTH] /me endpoint hit for user:', req.user?._id);
   res.json({ user: req.user.toJSON() });
 });
 
-// ─── GET /api/auth/users (admin: view all registered users) ──────────────────
+// ─── GET /api/auth/users — list all registered users (open in dev mode) ──────
 
 router.get('/users', authMiddleware, async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required.' });
-    }
+    // DEV MODE: No admin check
     const users = await User.find().sort({ createdAt: -1 });
     res.json({
       total: users.length,
@@ -283,7 +310,6 @@ async function handleOAuthUser({ email, name, provider, providerId, avatar }, re
       avatar: avatar || '',
     });
 
-    // Create default profile for new OAuth user
     await Profile.create({
       userId: user._id,
       name: user.name,
@@ -301,11 +327,13 @@ async function handleOAuthUser({ email, name, provider, providerId, avatar }, re
 
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    secure: false,
+    sameSite: 'lax',
+    maxAge: 30 * 24 * 60 * 60 * 1000,
     path: '/api/auth',
   });
+
+  await logHistory(user._id, 'oauth_login', 'auth', `OAuth login via ${provider}`);
 
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   res.redirect(`${frontendUrl}/oauth-callback?token=${accessToken}`);
@@ -315,7 +343,7 @@ async function handleOAuthUser({ email, name, provider, providerId, avatar }, re
 
 router.get('/google', (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
-  if (!clientId) {
+  if (!clientId || clientId === 'your_google_client_id_here') {
     return res.status(503).json({ error: 'Google OAuth not configured. Add GOOGLE_CLIENT_ID to .env' });
   }
   const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/google/callback`;

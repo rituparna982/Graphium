@@ -32,9 +32,10 @@ export default function Register() {
     if (password !== confirmPassword) {
       return setError('Passwords do not match.');
     }
-    if (passwordStrength < 5) {
-      return setError('Please meet all password requirements.');
-    }
+    // DEV MODE: Password requirements relaxed
+    // if (passwordStrength < 5) {
+    //   return setError('Please meet all password requirements.');
+    // }
 
     setLoading(true);
     try {

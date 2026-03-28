@@ -1,5 +1,5 @@
 import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
-import { Search, Home, Users, BookOpen, Microscope, Calendar, MessageSquare, Bell, ChevronDown, LogOut } from 'lucide-react';
+import { Search, Home, Users, BookOpen, Microscope, Calendar, MessageSquare, Bell, ChevronDown, LogOut, Clock } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
 import logo from './assets/logo.png';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -16,6 +16,7 @@ import Register from './pages/Register';
 import OAuthCallback from './pages/OAuthCallback';
 import Scholar from './pages/Scholar';
 import UserProfile from './pages/UserProfile';
+import History from './pages/History';
 
 import React, { useState, useEffect, useRef } from 'react';
 import api from './api/axios';
@@ -157,6 +158,10 @@ export default function App() {
                 <Bell />
                 <span className="nav-text">Notifications</span>
               </Link>
+              <Link to="/history" className={`nav-item ${isActive('/history')}`}>
+                <Clock />
+                <span className="nav-text">History</span>
+              </Link>
               {isAuthenticated ? (
                 <>
                   <Link to="/profile" className={`nav-item me-nav-item ${isActive('/profile')}`}>
@@ -197,6 +202,7 @@ export default function App() {
           <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
           <Route path="/scholar" element={<ProtectedRoute><Scholar /></ProtectedRoute>} />
           <Route path="/user/:userId" element={<ProtectedRoute><UserProfile /></ProtectedRoute>} />
+          <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
         </Routes>
       </main>
     </>

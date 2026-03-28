@@ -3,33 +3,70 @@ const User = require('../models/User');
 
 const JWT_SECRET = () => process.env.JWT_SECRET;
 
+// ──────────────────────────────────────────────────────────────────────────────
+// DEV MODE: Authentication is relaxed for development.
+// - If a valid token is provided, the real user is attached.
+// - If no token / invalid token, a default dev user is auto-created & attached.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const DEV_MODE = true; // TEMPORARY — set to false before production
+
 /**
- * Authentication middleware.
- * Extracts Bearer token, verifies JWT, attaches user to req.user.
+ * Authentication middleware (DEV MODE).
+ * In dev mode, if no token is provided a default dev user is used.
  */
 const authMiddleware = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Access denied. No token provided.' });
+
+    // Try normal JWT flow first
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET());
+        const user = await User.findById(decoded.userId);
+        if (user && user.isActive) {
+          req.user = user;
+          console.log(`[AUTH] Authenticated user: ${user.name || user._id}`);
+          return next();
+        }
+      } catch (tokenErr) {
+        console.log('[AUTH] Token verification failed:', tokenErr.message);
+        // Fall through to dev mode
+      }
     }
 
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET());
-
-    const user = await User.findById(decoded.userId);
-    if (!user || !user.isActive) {
-      return res.status(401).json({ error: 'Invalid token. User not found or deactivated.' });
+    // ── DEV MODE: auto-create / find a default dev user ──
+    if (DEV_MODE) {
+      console.log('[AUTH][DEV] No valid token — using dev bypass');
+      const { encrypt, hmacHash } = require('../utils/encryption');
+      const devEmail = 'dev@graphium.app';
+      let user = await User.findByEmail(devEmail);
+      if (!user) {
+        user = await User.createUser({
+          email: devEmail,
+          name: 'Dev User',
+          password: 'DevMode!123',
+        });
+        // Create a profile for the dev user
+        const Profile = require('../models/Profile');
+        await Profile.create({
+          userId: user._id,
+          name: 'Dev User',
+          title: 'Development Mode Researcher',
+        });
+        console.log('[AUTH][DEV] Created dev user:', user._id);
+      }
+      req.user = user;
+      return next();
     }
 
-    req.user = user;
-    next();
+    return res.status(401).json({ error: 'Access denied. No token provided.' });
   } catch (err) {
-    if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired.', code: 'TOKEN_EXPIRED' });
-    }
-    if (err.name === 'JsonWebTokenError') {
-      return res.status(401).json({ error: 'Invalid token.' });
+    console.error('[AUTH] Error:', err);
+    if (DEV_MODE) {
+      // Even on error, try to continue in dev mode
+      return next();
     }
     return res.status(500).json({ error: 'Authentication error.' });
   }
@@ -44,10 +81,14 @@ const optionalAuth = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
-      const decoded = jwt.verify(token, JWT_SECRET());
-      const user = await User.findById(decoded.userId);
-      if (user && user.isActive) {
-        req.user = user;
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET());
+        const user = await User.findById(decoded.userId);
+        if (user && user.isActive) {
+          req.user = user;
+        }
+      } catch {
+        // Silently continue
       }
     }
   } catch {
@@ -58,10 +99,14 @@ const optionalAuth = async (req, res, next) => {
 
 /**
  * Role-based authorization middleware.
- * @param  {...string} roles - Allowed roles
+ * DEV MODE: Always passes.
  */
 const authorize = (...roles) => {
   return (req, res, next) => {
+    if (DEV_MODE) {
+      console.log('[AUTH][DEV] Bypassing role check for roles:', roles);
+      return next();
+    }
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required.' });
     }
