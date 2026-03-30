@@ -240,14 +240,22 @@ export default function Profile() {
                 </div>
 
                 <div className="profile-actions">
-                  <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><UserPlus size={16} /> Request Collaboration</button>
+                  <Link to="/network" style={{ textDecoration: 'none' }}>
+                    <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <UserPlus size={16} /> Find Collaborators
+                    </button>
+                  </Link>
                   {!editMode && (
                     <button className="btn-secondary" onClick={startEdit} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <Edit3 size={14} /> Edit Profile
                     </button>
                   )}
                   <button className="btn-secondary" onClick={handleScholarSync}>Sync with Scholar</button>
-                  <button className="btn-secondary">Message</button>
+                  <Link to="/messaging" style={{ textDecoration: 'none' }}>
+                    <button className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Clock size={16} /> Messages
+                    </button>
+                  </Link>
                 </div>
               </div>
             </div>

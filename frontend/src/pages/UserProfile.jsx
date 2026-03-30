@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
-import { CheckCircle, UserPlus, ArrowLeft, BookOpen, Microscope, Globe, ThumbsUp, MessageSquare, Share2, Bookmark, Calendar, Database, Newspaper, HelpCircle, Award, FileText, Tag, Repeat2, ExternalLink } from 'lucide-react';
+import { CheckCircle, UserPlus, ArrowLeft, BookOpen, Microscope, Globe, ThumbsUp, MessageSquare, Share2, Bookmark, Calendar, Database, Newspaper, HelpCircle, Award, FileText, Tag, Repeat2, ExternalLink, X } from 'lucide-react';
 import ChatBox from '../components/ChatBox';
 
 function timeAgo(dateString) {
@@ -114,6 +114,25 @@ export default function UserProfile() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showChat, setShowChat] = useState(false);
+  const [requestModal, setRequestModal] = useState(false);
+  const [msgText, setMsgText] = useState('');
+  const [topicText, setTopicText] = useState('');
+
+  const sendRequest = async () => {
+    try {
+      await api.post('/api/collaborations', {
+        recipientId: userId,
+        message: msgText,
+        topic: topicText,
+      });
+      setRequestModal(false);
+      setMsgText('');
+      setTopicText('');
+      alert('Collaboration request sent successfully!');
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to send request.');
+    }
+  };
 
   const isOwnProfile = currentUser?._id === userId || currentUser?.id === userId;
 
@@ -200,7 +219,7 @@ export default function UserProfile() {
               </div>
 
               <div className="profile-actions">
-                <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><UserPlus size={16} /> Request Collaboration</button>
+                <button className="btn-primary" onClick={() => setRequestModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}><UserPlus size={16} /> Request Collaboration</button>
                 <button className="btn-secondary" onClick={() => setShowChat(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <MessageSquare size={16} /> Message
                 </button>
@@ -326,6 +345,44 @@ export default function UserProfile() {
           recipientName={displayName}
           onClose={() => setShowChat(false)}
         />
+      )}
+
+      {/* Collaboration Request Modal */}
+      {requestModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: 'white', borderRadius: 12, padding: 28, width: '100%', maxWidth: 460 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700 }}>Send Collaboration Request</h3>
+              <X size={20} style={{ cursor: 'pointer' }} onClick={() => { setRequestModal(false); setMsgText(''); setTopicText(''); }} />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Research Topic</label>
+              <input
+                type="text"
+                placeholder="e.g. Quantum Computing, ML for Biology..."
+                value={topicText}
+                onChange={e => setTopicText(e.target.value)}
+                style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 14 }}
+              />
+            </div>
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Message (optional)</label>
+              <textarea
+                placeholder="Introduce yourself and explain why you'd like to collaborate..."
+                value={msgText}
+                onChange={e => setMsgText(e.target.value)}
+                rows={4}
+                style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 14, resize: 'vertical' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn-secondary" onClick={() => { setRequestModal(false); setMsgText(''); setTopicText(''); }}>Cancel</button>
+              <button className="btn-primary" onClick={sendRequest} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <CheckCircle size={14} /> Send Request
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
