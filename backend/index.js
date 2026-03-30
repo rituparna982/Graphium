@@ -27,7 +27,7 @@ const historyRoutes = require('./routes/historyRoutes'); // NEW: History routes
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3001;
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const FRONTEND_URL = process.env.FRONTEND_URL || "*";
 
 // Connect to MongoDB
 connectDB();
@@ -43,7 +43,7 @@ console.log('══════════════════════�
 // ─── Socket.IO Setup ─────────────────────────────────────────────────────────
 const io = new Server(server, {
   cors: {
-    origin: [FRONTEND_URL, 'http://localhost:5173', 'http://localhost:3000'],
+    origin: [FRONTEND_URL],
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -137,7 +137,7 @@ io.on('connection', (socket) => {
       console.error('[SOCKET] Mark read error:', err);
     }
   });
-
+  
   // Typing indicator
   socket.on('typing', (data) => {
     const { receiverId } = data;
@@ -170,7 +170,7 @@ app.use(helmet({
 
 // DEV MODE: Allow multiple origins
 app.use(cors({
-  origin: [FRONTEND_URL, 'http://localhost:5173', 'http://localhost:3000'],
+  origin: [FRONTEND_URL],
   credentials: true,
 }));
 
@@ -187,14 +187,16 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-app.use(express.static(path.join(__dirname, '../frontend')));
-
 // ─── Request Logging Middleware ───────────────────────────────────────────────
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
   next();
 });
 
+// ─── Root Route ─────────────────────────────────────────────
+app.get('/', (req, res) => {
+  res.send('Graphium API is running');
+});
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/posts', postRoutes);
@@ -217,7 +219,7 @@ app.use(errorMiddleware);
 
 // Use server.listen instead of app.listen so Socket.IO works
 server.listen(PORT, () => {
-  console.log(`\n🚀 Backend API + WebSocket running on http://localhost:${PORT}`);
+  console.log(`🚀 Backend running on port ${PORT}`);
   console.log(`📡 Frontend expected at: ${FRONTEND_URL}`);
   console.log(`🔧 Dev mode: All auth bypassed, all permissions granted\n`);
 });
