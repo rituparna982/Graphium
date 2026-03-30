@@ -240,7 +240,7 @@ export default function Profile() {
                 </div>
 
                 <div className="profile-actions">
-                  <Link to="/network" style={{ textDecoration: 'none' }}>
+                  <Link to="/community" style={{ textDecoration: 'none' }}>
                     <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <UserPlus size={16} /> Find Collaborators
                     </button>
