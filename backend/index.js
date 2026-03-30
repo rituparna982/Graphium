@@ -23,6 +23,7 @@ const labRoutes = require('./routes/labRoutes');
 const collaborationRoutes = require('./routes/collaborationRoutes');
 const conferenceRoutes = require('./routes/conferenceRoutes');
 const historyRoutes = require('./routes/historyRoutes'); // NEW: History routes
+const flutterCollabRoutes = require('./routes/flutterCollabRoutes'); // NEW: Flutter routes
 
 const app = express();
 const server = http.createServer(app);
@@ -208,6 +209,7 @@ app.use('/api/labs', labRoutes);
 app.use('/api/collaborations', collaborationRoutes);
 app.use('/api/conference-papers', conferenceRoutes);
 app.use('/api/history', historyRoutes); // NEW: History routes
+app.use('/api/flutter', flutterCollabRoutes); // NEW: Flutter routes
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {

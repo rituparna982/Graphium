@@ -44,6 +44,15 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
+  // Short biography
+  bio: {
+    type: String,
+    default: '',
+  },
+  // User skills/interests
+  skills: [{
+    type: String
+  }],
   // Role-based access control
   role: {
     type: String,

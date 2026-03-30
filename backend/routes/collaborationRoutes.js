@@ -40,7 +40,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
       recipient: recipientId,
       message: message || '',
       topic: topic || '',
-      status: 'accepted', // DEV MODE: Auto-accept
+      status: 'pending', 
     });
     await collab.populate('requester', 'nameEncrypted avatar');
     await collab.populate('recipient', 'nameEncrypted avatar');
