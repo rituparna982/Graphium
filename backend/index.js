@@ -24,6 +24,7 @@ const collaborationRoutes = require('./routes/collaborationRoutes');
 const conferenceRoutes = require('./routes/conferenceRoutes');
 const historyRoutes = require('./routes/historyRoutes'); // NEW: History routes
 const flutterCollabRoutes = require('./routes/flutterCollabRoutes'); // NEW: Flutter routes
+const reviewRoutes = require('./routes/reviewRoutes'); // NEW: Review routes
 
 const app = express();
 const server = http.createServer(app);
@@ -44,7 +45,7 @@ console.log('══════════════════════�
 // ─── Socket.IO Setup ─────────────────────────────────────────────────────────
 const io = new Server(server, {
   cors: {
-    origin: [FRONTEND_URL],
+    origin: FRONTEND_URL === "*" ? true : [FRONTEND_URL, 'http://localhost:5173', 'http://localhost:3000'],
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -82,8 +83,8 @@ io.on('connection', (socket) => {
   // Handle sending a message
   socket.on('send_message', async (data) => {
     try {
-      const { receiverId, content } = data;
-      if (!receiverId || !content?.trim()) return;
+      const { receiverId, content, image } = data;
+      if (!receiverId || (!content?.trim() && !image)) return;
 
       const conversationId = Message.getConversationId(userId, receiverId);
 
@@ -91,7 +92,8 @@ io.on('connection', (socket) => {
         conversationId,
         sender: userId,
         receiver: receiverId,
-        content: content.trim(),
+        content: content?.trim() || '',
+        image: image || null
       });
 
       await message.save();
@@ -102,6 +104,7 @@ io.on('connection', (socket) => {
         sender: userId,
         receiver: receiverId,
         content: message.content,
+        image: message.image,
         createdAt: message.createdAt,
         read: false,
       };
@@ -163,16 +166,15 @@ io.on('connection', (socket) => {
   });
 });
 
-// ─── Security Middleware ──────────────────────────────────────────────────────
+// ─── Global Middleware ────────────────────────────────────────────────────────
+app.use(cors({
+  origin: true, // DEV/PROD: Reflect requester's origin to support credentials
+  credentials: true,
+}));
+
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
-}));
-
-// DEV MODE: Allow multiple origins
-app.use(cors({
-  origin: [FRONTEND_URL],
-  credentials: true,
 }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -210,6 +212,20 @@ app.use('/api/collaborations', collaborationRoutes);
 app.use('/api/conference-papers', conferenceRoutes);
 app.use('/api/history', historyRoutes); // NEW: History routes
 app.use('/api/flutter', flutterCollabRoutes); // NEW: Flutter routes
+app.use('/api/reviews', reviewRoutes); // NEW: Review routes
+
+// ─── ADMIN: Verify User ───────────────────────────────────────────────────────
+// In dev mode, let's just make an easy endpoint to verify any user
+const User = require('./models/User');
+app.put('/api/users/:id/verify', authMiddleware, async (req, res, next) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+    user.isVerified = !user.isVerified;
+    await user.save();
+    res.json({ message: 'User verification status updated.', isVerified: user.isVerified });
+  } catch (err) { next(err); }
+});
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
@@ -222,6 +238,6 @@ app.use(errorMiddleware);
 // Use server.listen instead of app.listen so Socket.IO works
 server.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
-  console.log(`📡 Frontend expected at: ${FRONTEND_URL}`);
+  console.log(`📡 Graphium Web expected at: ${FRONTEND_URL}`);
   console.log(`🔧 Dev mode: All auth bypassed, all permissions granted\n`);
 });
