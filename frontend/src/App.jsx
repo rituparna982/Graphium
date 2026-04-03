@@ -1,5 +1,5 @@
 import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
-import { Search, Home, Users, BookOpen, Microscope, Calendar, MessageSquare, Bell, ChevronDown, LogOut, Clock, Settings } from 'lucide-react';
+import { Search, Home, Users, BookOpen, Microscope, Calendar, MessageSquare, Bell, ChevronDown, LogOut, Clock, Settings, Sparkles } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
 import logo from './assets/logo.png';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -18,6 +18,7 @@ import Scholar from './pages/Scholar';
 import UserProfile from './pages/UserProfile';
 import History from './pages/History';
 import SettingsPage from './pages/Settings';
+import Ai from './pages/AiStudio';
 
 import React, { useState, useEffect, useRef } from 'react';
 import api from './api/axios';
@@ -147,6 +148,10 @@ export default function App() {
                 <Microscope />
                 <span className="nav-text">Labs & Grants</span>
               </Link>
+              <Link to="/ai" className={`nav-item ${isActive('/ai')}`}>
+                <Sparkles />
+                <span className="nav-text">Ai Lab</span>
+              </Link>
               <Link to="/conferences" className={`nav-item ${isActive('/conferences')}`}>
                 <Calendar />
                 <span className="nav-text">Conferences</span>
@@ -209,6 +214,7 @@ export default function App() {
           <Route path="/user/:userId" element={<ProtectedRoute><UserProfile /></ProtectedRoute>} />
           <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+          <Route path="/ai" element={<ProtectedRoute><Ai /></ProtectedRoute>} />
         </Routes>
       </main>
     </>

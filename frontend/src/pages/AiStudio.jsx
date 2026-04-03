@@ -8,7 +8,7 @@ const stats = [
   { label: 'Research Time Saved', value: '450h', icon: History, color: '#10b981' },
 ];
 
-export default function AiStudio() {
+export default function Ai() {
   const [pdfSummarizing, setPdfSummarizing] = useState(false);
   const [pdfResult, setPdfResult] = useState(null);
   const [fileName, setFileName] = useState('');
@@ -70,11 +70,11 @@ export default function AiStudio() {
       }}>
         <div style={{ position: 'relative', zIndex: 2, maxWidth: 800 }}>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.15)', padding: '6px 16px', borderRadius: 20, fontSize: 13, fontWeight: 700, marginBottom: 20 }}>
-            <Sparkles size={16} /> NEW: Gemini 1.5 Research Model
+            <Sparkles size={16} /> NEW: Bohrium Powered Ai
           </div>
-          <h1 style={{ fontSize: 42, fontWeight: 900, marginBottom: 16, letterSpacing: '-0.02em' }}>AI Research Laboratory</h1>
+          <h1 style={{ fontSize: 42, fontWeight: 900, marginBottom: 16, letterSpacing: '-0.02em' }}>Ai Laboratory</h1>
           <p style={{ fontSize: 18, color: '#ede9fe', lineHeight: 1.6, marginBottom: 32 }}>
-            Harness the power of Graphium's elite document intelligence to transform complex papers into highly structured, actionable research insights.
+            Harness the power of elite document intelligence to transform complex papers into highly structured, actionable research insights with Ai.
           </p>
           
           <div style={{ display: 'flex', gap: 24 }}>
@@ -141,7 +141,7 @@ export default function AiStudio() {
               </div>
               <h2 style={{ fontSize: 28, fontWeight: 800, color: '#4c1d95', marginBottom: 16 }}>Deep Reading Research...</h2>
               <p style={{ color: '#64748b', fontSize: 16, maxWidth: 500 }}>
-                Graphium AI is performing a multi-modal analysis of your paper. 
+                Ai is performing a multi-modal analysis of your paper. 
                 Extracting high-fidelity methodology and outcome data.
               </p>
             </div>
